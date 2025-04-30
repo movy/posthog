@@ -43,6 +43,7 @@ pub async fn test_black_hole(
     let comp = match meta.compression {
         None => String::from("unknown"),
         Some(Compression::Gzip) => String::from("gzip"),
+        Some(Compression::LZString) => String::from("lz64"),
         Some(Compression::Unsupported) => String::from("unsupported"),
     };
 

@@ -133,7 +133,7 @@ impl RawRequest {
                     )));
                 }
             }
-        } else if is_mirror_deploy && self.is_likely_base64(bytes) {
+        } else if is_mirror_deploy && is_likely_base64(&bytes) {
             // payload is base64 encoded; try "lz64" decompression from legacy capture
             let raw_b64 = match String::from_utf8(bytes.into()) {
                 Ok(s) => s,
@@ -158,7 +158,8 @@ impl RawRequest {
                 Ok(result) => result,
                 Err(e) => {
                     return Err(CaptureError::RequestDecodingError(format!(
-                        "in lz64 decompression: failed convert UTF16 to UTF8 String"
+                        "in lz64 decompression: failed convert UTF16 to UTF8 String, got: {}",
+                        e
                     )))
                 }
             };
@@ -227,31 +228,29 @@ impl RawRequest {
         }
         None
     }
+}
 
-    fn is_likely_base64(&self, bytes: &Bytes) -> bool {
-        if bytes.is_empty() {
-            return false;
-        }
-
-        // TODO: to keep this efficient, just check the first N bytes
-        let all_chars_b64_compatible = bytes.iter().all(|b| {
-            let c = *b as char;
-            (c >= 'A' && c <= 'Z')
-                || (c >= 'a' && c <= 'z')
-                || (c >= '0' && c <= '9')
-                || c == '+'
-                || c == '/'
-                || c == '='
-        });
-
-        let is_b64_aligned = {
-            bytes.ends_with(&[b'=', b'='])
-                || bytes.ends_with(&[b'='])
-                || *bytes.last().unwrap() != b'='
-        };
-
-        all_chars_b64_compatible && is_b64_aligned
+#[instrument(skip_all)]
+fn is_likely_base64(bytes: &Bytes) -> bool {
+    if bytes.is_empty() {
+        return false;
     }
+
+    // to keep this efficient, only checks the first N bytes
+    let all_chars_b64_compatible = bytes.iter().take(128).all(|b| {
+        (*b >= b'A' && *b <= b'Z')
+            || (*b >= b'a' && *b <= b'z')
+            || (*b >= b'0' && *b <= b'9')
+            || *b == b'+'
+            || *b == b'/'
+            || *b == b'='
+    });
+
+    let is_b64_aligned = {
+        bytes.ends_with(&[b'=', b'=']) || bytes.ends_with(&[b'=']) || *bytes.last().unwrap() != b'='
+    };
+
+    all_chars_b64_compatible && is_b64_aligned
 }
 
 #[instrument(skip_all, fields(events = events.len()))]
