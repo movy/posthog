@@ -148,9 +148,9 @@ impl RawRequest {
             let decomp_utf16 = match decompress_from_base64(&raw_b64) {
                 Some(v) => v,
                 None => {
-                    return Err(CaptureError::RequestDecodingError(format!(
-                        "in lz64 decompression: failed to decompress base64 into UTF16"
-                    )))
+                    return Err(CaptureError::RequestDecodingError(
+                        "in lz64 decompression: failed to decompress base64 into UTF16".to_string(),
+                    ))
                 }
             };
 
@@ -247,9 +247,8 @@ fn is_likely_base64(bytes: &Bytes) -> bool {
             || *b == b'='
     });
 
-    let is_b64_aligned = {
-        bytes.ends_with(&[b'=', b'=']) || bytes.ends_with(&[b'=']) || *bytes.last().unwrap() != b'='
-    };
+    let is_b64_aligned =
+        { bytes.ends_with(b"==") || bytes.ends_with(b"=") || *bytes.last().unwrap() != b'=' };
 
     all_chars_b64_compatible && is_b64_aligned
 }
