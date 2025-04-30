@@ -165,9 +165,10 @@ impl RawRequest {
             };
 
             if decompressed.len() >= limit {
-                tracing::error!("Request size limit reached (lz64)");
+                let err_msg = String::from("Request size limit reached (lz64)");
+                tracing::error!("{}", &err_msg);
                 report_dropped_events("event_too_big", 1);
-                return Err(CaptureError::EventTooBig);
+                return Err(CaptureError::EventTooBig(err_msg));
             }
 
             decompressed
