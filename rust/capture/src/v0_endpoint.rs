@@ -87,7 +87,11 @@ async fn handle_common(
                     }
                     CaptureError::RequestDecodingError(String::from("missing data field"))
                 })?;
-            RawRequest::from_bytes(payload.into(), state.event_size_limit, state.is_mirror_deploy)
+            RawRequest::from_bytes(
+                payload.into(),
+                state.event_size_limit,
+                state.is_mirror_deploy,
+            )
         }
         ct => {
             tracing::Span::current().record("content_type", ct);

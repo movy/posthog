@@ -133,17 +133,7 @@ impl RawRequest {
                     )));
                 }
             }
-        } else if is_mirror_deploy
-            && bytes.iter().all(|b| {
-                let c = *b as char;
-                (c >= 'A' && c <= 'Z')
-                    || (c >= 'a' && c <= 'z')
-                    || (c >= '0' && c <= '9')
-                    || c == '+'
-                    || c == '/'
-                    || c == '='
-            })
-        {
+        } else if is_mirror_deploy && self.is_likely_base64(bytes) {
             // payload is base64 encoded; try "lz64" decompression from legacy capture
             let raw_b64 = match String::from_utf8(bytes.into()) {
                 Ok(s) => s,
@@ -236,6 +226,31 @@ impl RawRequest {
             }
         }
         None
+    }
+
+    fn is_likely_base64(&self, bytes: &Bytes) -> bool {
+        if bytes.is_empty() {
+            return false;
+        }
+
+        // TODO: to keep this efficient, just check the first N bytes
+        let all_chars_b64_compatible = bytes.iter().all(|b| {
+            let c = *b as char;
+            (c >= 'A' && c <= 'Z')
+                || (c >= 'a' && c <= 'z')
+                || (c >= '0' && c <= '9')
+                || c == '+'
+                || c == '/'
+                || c == '='
+        });
+
+        let is_b64_aligned = {
+            bytes.ends_with(&[b'=', b'='])
+                || bytes.ends_with(&[b'='])
+                || *bytes.last().unwrap() != b'='
+        };
+
+        all_chars_b64_compatible && is_b64_aligned
     }
 }
 
