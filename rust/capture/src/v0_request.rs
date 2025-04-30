@@ -127,9 +127,9 @@ impl RawRequest {
             match String::from_utf8(buf) {
                 Ok(result) => result,
                 Err(e) => {
-                    tracing::error!("failed to decode gzip: {}", e);
+                    tracing::error!("failed to decode gzip into valid UTF8: {}", e);
                     return Err(CaptureError::RequestDecodingError(String::from(
-                        "invalid gzip data",
+                        "invalid UTF8 data from gzip payload",
                     )));
                 }
             }

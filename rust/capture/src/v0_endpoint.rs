@@ -49,15 +49,24 @@ async fn handle_common(
         .get("content-encoding")
         .map_or("unknown", |v| v.to_str().unwrap_or("unknown"));
 
+    if state.is_mirror_deploy {
+        // for mirror deploy, temporarily log all headers
+        for entry in headers {
+            let key = entry.0.as_str();
+            let value = entry.1.to_str().unwrap_or("UNKNOWN");
+            tracing::Span::current().record(key, value);
+        }
+    } else {
+        tracing::Span::current().record("user_agent", user_agent);
+        tracing::Span::current().record("content_encoding", content_encoding);
+    }
+
     let comp = match meta.compression {
         None => String::from("unknown"),
         Some(Compression::Gzip) => String::from("gzip"),
         Some(Compression::LZString) => String::from("lz64"),
         Some(Compression::Unsupported) => String::from("unsupported"),
     };
-
-    tracing::Span::current().record("user_agent", user_agent);
-    tracing::Span::current().record("content_encoding", content_encoding);
     tracing::Span::current().record("version", meta.lib_version.clone());
     tracing::Span::current().record("compression", comp.as_str());
     tracing::Span::current().record("method", method.as_str());
@@ -71,8 +80,11 @@ async fn handle_common(
             tracing::Span::current().record("content_type", "application/x-www-form-urlencoded");
 
             let input: EventFormData = serde_urlencoded::from_bytes(body.deref()).map_err(|e| {
-                error!("failed to decode body: {}", e);
-                CaptureError::RequestDecodingError(String::from("invalid form data"))
+                error!("decoding form into event: {}", e);
+                CaptureError::RequestDecodingError(format!(
+                    "failed deserializing urlencoded event form data: {}",
+                    e
+                ))
             })?;
             let payload = base64::engine::general_purpose::STANDARD
                 .decode(&input.data)
@@ -80,10 +92,13 @@ async fn handle_common(
                     if state.is_mirror_deploy {
                         // get a peek at the headers and a short snip of the payload in mirror
                         // see which capture.py "kludge warning" these may map to, if any
-                        error!("failed to decode mirrored form data: {} w/ headers << {:?} >> and data: {:?}...",
-                            e, &headers, &input.data[0..input.data.len().min(40)]);
+                        error!(
+                            "failed to decode mirrored form w/error: {} and data: {:?}...",
+                            e,
+                            &input.data[0..input.data.len().min(40)]
+                        );
                     } else {
-                        error!("failed to decode form data: {}", e);
+                        error!("failed to decode base64 form data: {}", e);
                     }
                     CaptureError::RequestDecodingError(String::from("missing data field"))
                 })?;
