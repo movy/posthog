@@ -52,6 +52,7 @@ async fn handle_common(
     let comp = match meta.compression {
         None => String::from("unknown"),
         Some(Compression::Gzip) => String::from("gzip"),
+        Some(Compression::LZString) => String::from("lz64"),
         Some(Compression::Unsupported) => String::from("unsupported"),
     };
 
@@ -86,12 +87,12 @@ async fn handle_common(
                     }
                     CaptureError::RequestDecodingError(String::from("missing data field"))
                 })?;
-            RawRequest::from_bytes(payload.into(), state.event_size_limit)
+            RawRequest::from_bytes(payload.into(), state.event_size_limit, state.is_mirror_deploy)
         }
         ct => {
             tracing::Span::current().record("content_type", ct);
 
-            RawRequest::from_bytes(body, state.event_size_limit)
+            RawRequest::from_bytes(body, state.event_size_limit, state.is_mirror_deploy)
         }
     }?;
 

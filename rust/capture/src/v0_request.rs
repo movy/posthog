@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use bytes::{Buf, Bytes};
 use common_types::{CapturedEvent, RawEvent};
 use flate2::read::GzDecoder;
+use lz_str::decompress_from_base64;
 use serde::Deserialize;
 use time::format_description::well_known::Iso8601;
 use time::OffsetDateTime;
@@ -20,6 +21,9 @@ pub enum Compression {
 
     #[serde(rename = "gzip", alias = "gzip-js")]
     Gzip,
+
+    #[serde(rename = "lzstring")]
+    LZString,
 }
 
 #[derive(Deserialize, Default)]
@@ -85,7 +89,11 @@ impl RawRequest {
     /// Instead of trusting the parameter, we peek at the payload's first three bytes to
     /// detect gzip, fallback to uncompressed utf8 otherwise.
     #[instrument(skip_all)]
-    pub fn from_bytes(bytes: Bytes, limit: usize) -> Result<RawRequest, CaptureError> {
+    pub fn from_bytes(
+        bytes: Bytes,
+        limit: usize,
+        is_mirror_deploy: bool,
+    ) -> Result<RawRequest, CaptureError> {
         tracing::debug!(len = bytes.len(), "decoding new event");
 
         let payload = if bytes.starts_with(&GZIP_MAGIC_NUMBERS) {
@@ -117,7 +125,7 @@ impl RawRequest {
                 }
             }
             match String::from_utf8(buf) {
-                Ok(s) => s,
+                Ok(result) => result,
                 Err(e) => {
                     tracing::error!("failed to decode gzip: {}", e);
                     return Err(CaptureError::RequestDecodingError(String::from(
@@ -125,19 +133,68 @@ impl RawRequest {
                     )));
                 }
             }
+        } else if is_mirror_deploy
+            && bytes.iter().all(|b| {
+                let c = *b as char;
+                (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')
+                    || c == '+'
+                    || c == '/'
+                    || c == '='
+            })
+        {
+            // payload is base64 encoded; try "lz64" decompression from legacy capture
+            let raw_b64 = match String::from_utf8(bytes.into()) {
+                Ok(s) => s,
+                Err(e) => {
+                    return Err(CaptureError::RequestDecodingError(format!(
+                        "in lz64 decompression: failed in b64 to UTF8 conversion, got: {}",
+                        e
+                    )))
+                }
+            };
+
+            let decomp_utf16 = match decompress_from_base64(&raw_b64) {
+                Some(v) => v,
+                None => {
+                    return Err(CaptureError::RequestDecodingError(format!(
+                        "in lz64 decompression: failed to decompress base64 into UTF16"
+                    )))
+                }
+            };
+
+            let decompressed = match String::from_utf16(&decomp_utf16) {
+                Ok(result) => result,
+                Err(e) => {
+                    return Err(CaptureError::RequestDecodingError(format!(
+                        "in lz64 decompression: failed convert UTF16 to UTF8 String"
+                    )))
+                }
+            };
+
+            if decompressed.len() >= limit {
+                tracing::error!("Request size limit reached (lz64)");
+                report_dropped_events("event_too_big", 1);
+                return Err(CaptureError::EventTooBig);
+            }
+
+            decompressed
         } else {
+            // assume the payload is not compressed if above checks failed
             let s = String::from_utf8(bytes.into()).map_err(|e| {
                 tracing::error!("failed to decode body: {}", e);
                 CaptureError::RequestDecodingError(String::from("invalid body encoding"))
             })?;
             if s.len() > limit {
-                tracing::error!("Request size limit reached");
+                tracing::error!("Request size limit reached (uncompressed)");
                 report_dropped_events("event_too_big", 1);
                 return Err(CaptureError::EventTooBig(format!(
                     "Event or batch wasn't compressed, size exceeded {}",
                     limit
                 )));
             }
+
             s
         };
 
@@ -270,7 +327,7 @@ mod tests {
                 .expect("payload is not base64"),
         );
 
-        let events = RawRequest::from_bytes(compressed_bytes, 1024)
+        let events = RawRequest::from_bytes(compressed_bytes, 1024, false)
             .expect("failed to parse")
             .events();
         assert_eq!(1, events.len());
@@ -292,7 +349,7 @@ mod tests {
                 .expect("payload is not base64"),
         );
 
-        let events = RawRequest::from_bytes(compressed_bytes, 2048)
+        let events = RawRequest::from_bytes(compressed_bytes, 2048, false)
             .expect("failed to parse")
             .events();
         assert_eq!(1, events.len());
@@ -309,7 +366,7 @@ mod tests {
     #[test]
     fn extract_distinct_id() {
         let parse_and_extract = |input: &'static str| -> Result<String, CaptureError> {
-            let parsed = RawRequest::from_bytes(input.into(), 2048)
+            let parsed = RawRequest::from_bytes(input.into(), 2048, false)
                 .expect("failed to parse")
                 .events();
             parsed[0]
@@ -379,7 +436,7 @@ mod tests {
             "distinct_id": distinct_id
         }]);
 
-        let parsed = RawRequest::from_bytes(input.to_string().into(), 2048)
+        let parsed = RawRequest::from_bytes(input.to_string().into(), 2048, false)
             .expect("failed to parse")
             .events();
         assert_eq!(
@@ -391,7 +448,7 @@ mod tests {
     #[test]
     fn extract_and_verify_token() {
         let parse_and_extract = |input: &'static str| -> Result<String, CaptureError> {
-            RawRequest::from_bytes(input.into(), 2048)
+            RawRequest::from_bytes(input.into(), 2048, false)
                 .expect("failed to parse")
                 .extract_and_verify_token()
         };
